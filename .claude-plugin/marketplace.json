@@ -22,6 +22,24 @@
         "workspace"
       ],
       "category": "productivity"
+    },
+    {
+      "name": "plugin-authoring",
+      "source": "./plugins/plugin-authoring",
+      "description": "Package a skill or agent into a plugin marketplace and cut releases from it. Adds the plugin directory and manifests, updates marketplace.json, validates, documents, and ships.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Shad Reynolds"
+      },
+      "homepage": "https://shadr.us/plugins",
+      "license": "Apache-2.0",
+      "keywords": [
+        "plugin",
+        "marketplace",
+        "authoring",
+        "release"
+      ],
+      "category": "productivity"
     }
   ]
 }
