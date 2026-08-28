@@ -58,26 +58,49 @@ cmux rename-tab "build logs"                                     # this tab
 cmux rename-window "anvilog"                                     # window title
 ```
 
-## 3. Identity: make the sidebar readable
+## 3. The semantic contract
 
-Naming is the highest-value thing you can do here, because the sidebar is the
-user's only view of a dozen parallel agents. A workspace can carry a title, a
-color, a description, and pinned position.
+Every sidebar channel means exactly one thing, and channels belong to three
+axes that must never borrow from each other:
+
+| Axis | Answers | Lifetime | Channels |
+|---|---|---|---|
+| **Identity** | what is this work? | changes when the work changes | title, group, color, icon, description |
+| **State** | what is happening now? | cleared when it ends | pill, progress, spinner, log, notify |
+| **Attention** | what needs me? | scarce and temporary | pin, collapse, order, unread badge |
+
+The short version, enough to act on:
+
+- **Title** is `role · object` — the work, not the prompt that started it, under
+  ~24 characters, no status words, never repeating the group name.
+- **Group** is one repo plus one arc (`anvilog · #72 status`), not a repo bucket.
+  Its anchor is a dedicated empty shell, never a working session.
+- **Color is the stream and never the status.** One hue per group, set on the
+  group *and* on every member — the group color tints only the header, so an
+  uncolored member has no stripe at all. Ungrouped rows stay uncolored.
+- **Icon** is group-level, naming the kind of arc.
+- **Description** is what "done" means for that row. Not a log.
+- **Pills, progress, spinner** carry state, and every one of them is a promise
+  to clear it. A pill may use color for status precisely because the row's
+  color may not.
+- **The default is nothing pinned.** Group order already says what matters.
+- **Todo lists and unread badges are the user's.** Never write them.
 
 ```sh
-cmux workspace-action --action rename --title "PR #75 review"
-cmux workspace-action --action set-color --color Amber      # or #C0392B
-cmux workspace-action --action set-description --description $'Ship checklist\n- verify build\n- post notes'
-cmux workspace-action --action pin
-cmux workspace-action --action clear-color
+cmux workspace-action --action rename --title "fix + PR reply"
+cmux workspace-action --action set-color --color "#F59E0B"     # the group's hue
+cmux workspace-action --action set-description --description "Ship #75 findings. Done = pushed, PR comment posted."
+cmux workspace-group set-color workspace_group:1 --hex "#F59E0B"
+cmux workspace-group set-icon workspace_group:1 --symbol checkmark.seal
 ```
 
 Named colors: Red, Crimson, Orange, Amber, Olive, Green, Teal, Aqua, Blue, Navy,
 Indigo, Purple, Magenta, Rose, Brown, Charcoal.
 
-Pick a **color convention and stick to it within a session** — e.g. one hue per
-repo, or Green=passing / Amber=running / Red=failing. State the convention you
-chose in your reply so the user can accept or redraw it.
+`references/sidebar-semantics.md` is the full contract — the per-channel rules,
+the failure each one prevents, and the worked examples of titles and groups that
+break it. **Read it before reshaping a sidebar**, and state the mapping you used
+in your reply so the user can correct it once instead of re-deriving it.
 
 ## 4. Grouping: collapse a swarm into a section
 

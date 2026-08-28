@@ -14,7 +14,7 @@ skills and agents I use daily. Documented at [shadr.us/plugins](https://shadr.us
 
 | Plugin | Description |
 | --- | --- |
-| [cmux-control](plugins/cmux-control) | Drive the cmux terminal from inside a session — rename, color, and group sidebar workspaces, report status pills, arrange panes. |
+| [cmux-control](plugins/cmux-control) | Drive the cmux terminal from inside a session under a defined sidebar contract, with a deterministic sync script and a cheap-model cleanup pass. |
 | [plugin-authoring](plugins/plugin-authoring) | Package a skill or agent into this marketplace and cut releases from it — manifests, validation, docs, tag, install. |
 
 ## Layout

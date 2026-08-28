@@ -9,8 +9,8 @@
     {
       "name": "cmux-control",
       "source": "./plugins/cmux-control",
-      "description": "Drive the cmux terminal from inside a session: rename, color, and group sidebar workspaces, report status pills and progress, arrange panes and splits.",
-      "version": "0.1.0",
+      "description": "Drive the cmux terminal from inside a session, under a defined sidebar contract: titles, colors, groups, and status pills each mean one thing. Ships a deterministic sync script and a cheap-model cleanup pass.",
+      "version": "0.2.0",
       "author": {
         "name": "Shad Reynolds"
       },
@@ -19,7 +19,8 @@
       "keywords": [
         "cmux",
         "terminal",
-        "workspace"
+        "workspace",
+        "sidebar"
       ],
       "category": "productivity"
     },

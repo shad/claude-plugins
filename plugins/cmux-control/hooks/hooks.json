@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/cmux-sidebar-sync --hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

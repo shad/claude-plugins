@@ -21,6 +21,31 @@ surface as typing on someone else's keyboard.
 /plugin install cmux-control@shad
 ```
 
+## What's in it
+
+| Component | Does |
+|---|---|
+| `cmux-control` skill | the contract, and how to reshape a sidebar under it |
+| `references/sidebar-semantics.md` | the full per-channel contract |
+| `bin/cmux-sidebar-sync` | deterministic pass — fixes what state decides, reports the rest |
+| `tidy-sidebar` skill | runs both passes in order |
+| `sidebar-groundskeeper` agent | the cheap-model pass: reads sessions, retitles rows |
+| `Stop` hook | runs the deterministic pass after every turn, silently |
+
+## The sidebar contract
+
+Every channel means one thing, and channels never borrow across axes:
+
+- **Identity** — title, group, color, icon, description. Changes when the work
+  changes. Color is the *stream*, never the status.
+- **State** — pills, progress, spinner, log, notify. Every one is a promise to
+  clear it.
+- **Attention** — pin, collapse, order, unread badge. Scarce by definition; the
+  default is nothing pinned.
+
+`references/sidebar-semantics.md` has the per-channel rules and the failure each
+one prevents.
+
 ## Use
 
 The skill is model-invoked — just talk about the terminal:
