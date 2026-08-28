@@ -1,0 +1,10 @@
+{
+  "name": "cmux-control",
+  "description": "Drive the cmux terminal from inside a session: rename, color, and group sidebar workspaces, report status pills and progress, arrange panes and splits.",
+  "version": "0.1.0",
+  "author": { "name": "Shad Reynolds" },
+  "homepage": "https://shadr.us/plugins",
+  "repository": "https://github.com/shad/claude-plugins",
+  "license": "Apache-2.0",
+  "keywords": ["cmux", "terminal", "workspace"]
+}
