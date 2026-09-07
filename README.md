@@ -7,14 +7,13 @@ skills and agents I use daily. Documented at [shadr.us/plugins](https://shadr.us
 
 ```
 /plugin marketplace add shad/claude-plugins
-/plugin install cmux-control@shad
+/plugin install plugin-authoring@shad
 ```
 
 ## Plugins
 
 | Plugin | Description |
 | --- | --- |
-| [cmux-control](plugins/cmux-control) | Drive the cmux terminal from inside a session under a defined sidebar contract, with a deterministic sync script and a cheap-model cleanup pass. |
 | [plugin-authoring](plugins/plugin-authoring) | Package a skill or agent into this marketplace and cut releases from it — manifests, validation, docs, tag, install. |
 
 ## Layout
@@ -33,7 +32,7 @@ Adding a plugin means adding a directory under `plugins/` and an entry in
 
 ```
 claude plugin validate .                       # validate the marketplace
-claude --plugin-dir ./plugins/cmux-control     # load a plugin without installing
+claude --plugin-dir ./plugins/plugin-authoring  # load a plugin without installing
 ```
 
 ## License

@@ -7,24 +7,6 @@
   },
   "plugins": [
     {
-      "name": "cmux-control",
-      "source": "./plugins/cmux-control",
-      "description": "Drive the cmux terminal from inside a session, under a defined sidebar contract: titles, colors, groups, and status pills each mean one thing. Ships a deterministic sync script and a cheap-model cleanup pass.",
-      "version": "0.2.0",
-      "author": {
-        "name": "Shad Reynolds"
-      },
-      "homepage": "https://shadr.us/plugins",
-      "license": "Apache-2.0",
-      "keywords": [
-        "cmux",
-        "terminal",
-        "workspace",
-        "sidebar"
-      ],
-      "category": "productivity"
-    },
-    {
       "name": "plugin-authoring",
       "source": "./plugins/plugin-authoring",
       "description": "Package a skill or agent into a plugin marketplace and cut releases from it. Adds the plugin directory and manifests, updates marketplace.json, validates, documents, and ships.",
