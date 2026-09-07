@@ -1,188 +1,237 @@
 #!/usr/bin/env python3
-"""Enforce the mechanical half of the sidebar contract.
+"""Group sidebar rows by the feature their session is working on.
 
-Fixes what is decidable from state alone (color follows group, ungrouped rows
-carry no color, anchor titles match group names) and reports what needs
-judgment (titles that read like prompts, dead groups, rows holding two streams)
-without guessing at it.
+Shell cwd cannot answer this. Sessions read in the main checkout and write in a
+worktree, so cwd says the same repo for all of them. The transcript records the
+worktree, so that is what we read.
 
-  cmux-sidebar-sync            apply fixes, print drift needing judgment
-  cmux-sidebar-sync --check    report only, change nothing
-  cmux-sidebar-sync --quiet    suppress the applied-fix lines
-  cmux-sidebar-sync --hook     apply silently, one summary line, never fail
+Grouping is additive. It creates a group and adds a row. It never moves a row
+out, dissolves a group, or undoes a placement a person made.
 
-Exit 0 clean, 1 drift needs judgment, 2 cmux unreachable. --hook always
-exits 0: a hook that fails on a messy sidebar is worse than a messy sidebar.
-See references/sidebar-semantics.md for what each rule is enforcing.
+  cmux-sidebar-sync          group rows, set PR pills, report
+  cmux-sidebar-sync --check  report only
+  cmux-sidebar-sync --hook   quiet, never fails
+
+See references/sidebar-semantics.md.
 """
+import glob
 import json
+import os
+import pathlib
 import re
 import subprocess
 import sys
+import time
 
-STATUS_WORDS = re.compile(
-    r"\b(wip|todo|done|doing|blocked|pending|in.progress|fixme|urgent|asap)\b", re.I
-)
-TITLE_MAX = 24
+CACHE = pathlib.Path.home() / ".cache" / "cmux-sidebar-sync"
+PR_TTL = 60
+
+
+def run(*cmd, cwd=None, timeout=15):
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout)
+    return r.stdout if r.returncode == 0 else ""
 
 
 def cmux(*args):
-    r = subprocess.run(("cmux",) + args, capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"cmux {' '.join(args)}: {r.stderr.strip() or r.stdout.strip()}")
-    return r.stdout
+    return run("cmux", *args)
+
+
+def session_of(tty):
+    """The Claude session id cmux passed on the command line, via the tty.
+    Fresh sessions get --session-id; resumed ones get --resume."""
+    for line in run("ps", "-t", tty, "-o", "command=").splitlines():
+        m = re.search(r"--(?:session-id|resume)\s+([0-9a-f-]{36})", line)
+        if m:
+            return m.group(1)
+    return None
+
+
+def transcript_of(session_id):
+    hits = glob.glob(str(pathlib.Path.home() / ".claude/projects/*" / f"{session_id}.jsonl"))
+    return hits[0] if hits else None
+
+
+def recorded(session_id):
+    """What the PostToolUse hook saw this session touch. Ground truth."""
+    f = CACHE / "session" / session_id
+    try:
+        repo, feature = f.read_text().strip().split("\t")
+        return repo, feature
+    except (OSError, ValueError):
+        return None
+
+
+def feature_of(transcript):
+    """The last worktree the session entered. Not the last cwd — a session that
+    finished has returned to the main checkout."""
+    out = run("grep", "-o", r'"cwd":"[^"]*worktrees/[^"]*"', transcript)
+    if not out:
+        return None
+    path = out.strip().splitlines()[-1].split('"')[3]
+    m = re.match(r"(.*?)/(?:\.claude/)?\.?worktrees/([^/]+)", path)
+    return (m.group(1), m.group(2)) if m else None
+
+
+def repo_root(path):
+    """The main checkout, even from inside a worktree."""
+    common = run("git", "rev-parse", "--path-format=absolute", "--git-common-dir",
+                 cwd=path).strip()
+    if common.endswith("/.git"):
+        return common[:-5]
+    return run("git", "rev-parse", "--show-toplevel", cwd=path).strip() or None
+
+
+def prs_for(repo):
+    """One gh call per repo, cached. No PR number is stored locally, so the
+    branch is the only join."""
+    CACHE.mkdir(parents=True, exist_ok=True)
+    f = CACHE / (re.sub(r"\W+", "_", repo) + ".json")
+    if f.exists() and time.time() - f.stat().st_mtime < PR_TTL:
+        return json.loads(f.read_text())
+    out = run("gh", "pr", "list", "--state", "all", "--limit", "50", "--json",
+              "number,headRefName,state,isDraft,reviewDecision", cwd=repo, timeout=20)
+    prs = {}
+    for pr in json.loads(out or "[]"):
+        state = "draft" if pr["isDraft"] else pr["state"].lower()
+        if pr.get("reviewDecision") == "APPROVED":
+            state = "approved"
+        prs[pr["headRefName"]] = f"#{pr['number']} {state}"
+    f.write_text(json.dumps(prs))
+    return prs
+
+
+def branch_of(repo, slug):
+    for p in (f"{repo}/.git/worktrees/{slug}/HEAD",):
+        try:
+            head = open(p).read().strip()
+        except OSError:
+            continue
+        if head.startswith("ref: refs/heads/"):
+            return head[len("ref: refs/heads/"):]
+    return None
 
 
 def main():
     hook = "--hook" in sys.argv
-    apply_fixes = "--check" not in sys.argv
-    quiet = hook or "--quiet" in sys.argv
+    apply_ = "--check" not in sys.argv
+    notes, acted = [], []
+
     try:
-        workspaces = json.loads(cmux("workspace", "list", "--json"))["workspaces"]
-        groups = json.loads(cmux("workspace-group", "list", "--json"))["groups"]
-    except (RuntimeError, json.JSONDecodeError, KeyError) as e:
-        if "--hook" in sys.argv:
-            return 0  # not running under cmux, or cmux is down; say nothing
-        print(f"cmux-sidebar-sync: {e}", file=sys.stderr)
-        return 2
+        rows = json.loads(cmux("workspace", "list", "--json") or '{"workspaces":[]}')["workspaces"]
+        cwds = {w["ref"]: w.get("current_directory") for w in rows}
+        tree = json.loads(cmux("tree", "--all", "--json") or "{}")
+        groups = json.loads(cmux("workspace-group", "list", "--json") or '{"groups":[]}')["groups"]
+    except (json.JSONDecodeError, KeyError):
+        return 0 if hook else 2
 
-    by_ref = {w["ref"]: w for w in workspaces}
-    group_of = {}
-    for g in groups:
-        for ref in g["member_workspace_refs"]:
-            group_of[ref] = g
+    # First terminal tab of each row. One row is one job; tab 1 owns it.
+    ttys = {}
+    for win in tree.get("windows", []):
+        for ws in win.get("workspaces", []):
+            for pane in ws.get("panes", []):
+                for surf in pane.get("surfaces", []):
+                    if surf.get("type") == "terminal" and surf.get("tty"):
+                        ttys.setdefault(ws["ref"], surf["tty"])
+                        break
 
-    fixed, drift = [], []
+    by_name = {g["name"]: g for g in groups}
+    grouped = {r for g in groups for r in g["member_workspace_refs"]}
 
-    for g in groups:
-        members = [by_ref[r] for r in g["member_workspace_refs"] if r in by_ref]
-        anchor = by_ref.get(g["anchor_workspace_ref"])
-        hue = g.get("custom_color")
+    for ws, tty in sorted(ttys.items()):
+        sid = session_of(tty)
+        if not sid:
+            continue
+        found = recorded(sid)
+        if not found:
+            t = transcript_of(sid)
+            found = feature_of(t) if t else None
+        if not found:
+            # No worktree evidence. The row is working in the main checkout, so
+            # that is where it belongs — a bucket, not a feature.
+            root = repo_root(cwds.get(ws) or "")
+            if not root:
+                continue
+            found = (root, "main")
+        repo, feature = found
+        name = f"{os.path.basename(repo)} · {feature}"
 
-        # A group is a stream; a stream has a hue and a kind.
-        if not hue:
-            drift.append(f"{g['ref']} \"{g['name']}\" has no color — pick a hue for the stream")
-        if not g.get("icon_symbol"):
-            drift.append(f"{g['ref']} \"{g['name']}\" has no icon — name the kind of arc")
+        if ws in grouped and by_name.get(name, {}).get("member_workspace_refs", []) and \
+                ws in by_name[name]["member_workspace_refs"]:
+            continue
+        if ws in grouped:
+            # A `· main` bucket is not a placement, it is the absence of one.
+            # Evidence of a feature outranks it. Every other group is permanent.
+            here = next((g for g in groups if ws in g["member_workspace_refs"]), None)
+            if not (here and here["name"].endswith("· main") and feature != "main"):
+                notes.append(f"{ws} works in {feature} but sits elsewhere — left alone")
+                continue
+            if not apply_:
+                notes.append(f'{ws} moves from "{here["name"]}" to "{name}"')
+                continue
+            cmux("workspace-group", "remove", "--workspace", ws)
+            grouped.discard(ws)
+            acted.append(f'{ws} promoted out of "{here["name"]}"')
 
-        # An anchor-only group is a header over nothing.
-        if len(members) <= 1:
-            drift.append(
-                f"{g['ref']} \"{g['name']}\" has no members besides its anchor — "
-                f"dissolve it or move its work in"
-            )
+        if not apply_:
+            notes.append(f"{ws} belongs in \"{name}\"")
+            continue
 
-        # The anchor row is the header; its title should read as the group.
-        if anchor and anchor.get("custom_title") != g["name"]:
-            if apply_fixes:
-                cmux("workspace-action", "--action", "rename",
-                     "--workspace", anchor["ref"], "--title", g["name"])
-                fixed.append(f"{anchor['ref']} title := \"{g['name']}\" (anchor follows group)")
-            else:
-                drift.append(f"{anchor['ref']} anchor title != group name \"{g['name']}\"")
+        if name not in by_name:
+            path = f"{repo}/.worktrees/{feature}"
+            cmux("workspace-group", "create", "--name", name,
+                 "--cwd", path if os.path.isdir(path) else repo)
+            groups = json.loads(cmux("workspace-group", "list", "--json"))["groups"]
+            by_name = {g["name"]: g for g in groups}
+            acted.append(f'created "{name}"')
+        g = by_name.get(name)
+        if g:
+            cmux("workspace-group", "add", "--group", g["ref"], "--workspace", ws)
+            grouped.add(ws)
+            acted.append(f'{ws} → "{name}"')
 
-        # Color is the stream: the group tints only its header, so members
-        # without their own hue show no stripe at all.
-        if hue:
-            for w in members:
-                if w["ref"] == g["anchor_workspace_ref"]:
-                    continue
-                if (w.get("custom_color") or "").upper() != hue.upper():
-                    if apply_fixes:
-                        cmux("workspace-action", "--action", "set-color",
-                             "--workspace", w["ref"], "--color", hue)
-                        fixed.append(f"{w['ref']} color := {hue} ({g['name']})")
-                    else:
-                        drift.append(f"{w['ref']} color != its group's {hue}")
-
-    for w in workspaces:
-        ref, title = w["ref"], w.get("custom_title") or ""
-        g = group_of.get(ref)
-
-        # Belonging to no stream is a state with a look: no color.
-        if not g and w.get("custom_color"):
-            if apply_fixes:
-                cmux("workspace-action", "--action", "clear-color", "--workspace", ref)
-                fixed.append(f"{ref} color cleared (ungrouped rows carry no hue)")
-            else:
-                drift.append(f"{ref} is ungrouped but colored")
-
-        if g and w["ref"] == g["anchor_workspace_ref"]:
-            continue  # the anchor is a header, not a row of work
-
-        if not w.get("has_custom_title"):
-            drift.append(f"{ref} is auto-named \"{title}\" — needs a `role · object` title")
-        else:
-            if len(title) > TITLE_MAX:
-                drift.append(f"{ref} title is {len(title)} chars — \"{title}\"")
-            if STATUS_WORDS.search(title):
-                drift.append(f"{ref} title carries state, not identity — \"{title}\"")
-            if g:
-                # Only the group's identifying tokens count as a repeat: its
-                # repo name and its ticket numbers. Sharing an ordinary word
-                # ("status" in a group about bin/status) is not duplication.
-                ident = {g["name"].split("·")[0].strip().lower()}
-                ident |= set(re.findall(r"#\d+", g["name"]))
-                shared = {t for t in ident if t and t in title.lower()}
-                if shared:
-                    drift.append(
-                        f"{ref} title repeats its group ({', '.join(sorted(shared))}) — \"{title}\""
-                    )
-
-        if w.get("pinned"):
-            drift.append(f"{ref} is pinned — a pin is temporary and scarce; still earning it?")
-
-        if not g and w.get("current_directory"):
-            for other in groups:
-                anchor = by_ref.get(other["anchor_workspace_ref"])
-                if anchor and anchor.get("current_directory") == w["current_directory"]:
-                    drift.append(
-                        f"{ref} is ungrouped but shares a directory with \"{other['name']}\""
-                    )
-                    break
-
-    # A row is one unit of work; extra tabs may be companions or a second stream.
-    try:
-        tree = cmux("tree", "--all")
-        current = None
-        counts = {}
-        for line in tree.splitlines():
-            m = re.search(r"workspace (workspace:\d+)", line)
-            if m:
-                current = m.group(1)
-            elif current and "surface:" in line and "[terminal]" in line:
-                counts[current] = counts.get(current, 0) + 1
-        for ref, n in counts.items():
-            if n > 1:
-                drift.append(
-                    f"{ref} holds {n} tabs — companions to one job, or a second stream to split out?"
-                )
-    except RuntimeError:
-        pass
+    # PR state is a pill. Group headers do not render pills, only name and icon,
+    # so it goes on the member rows.
+    for g in json.loads(cmux("workspace-group", "list", "--json") or '{"groups":[]}')["groups"]:
+        if "·" not in g["name"]:
+            continue
+        anchor = g["anchor_workspace_ref"]
+        feature = g["name"].split("·")[-1].strip()
+        if feature == "main":
+            continue
+        repo = next((r for r in (os.path.expanduser(f"~/projects/{g['name'].split('·')[0].strip()}"),)
+                     if os.path.isdir(r)), None)
+        if not repo or not apply_:
+            continue
+        branch = branch_of(repo, feature)
+        if not branch:
+            continue
+        try:
+            pr = prs_for(repo).get(branch)
+        except Exception:
+            continue
+        if pr:
+            for ws in g["member_workspace_refs"]:
+                if ws != anchor:
+                    cmux("set-status", "pr", pr, "--workspace", ws,
+                         "--icon", "arrow.triangle.branch")
+            acted.append(f'{g["name"]}: pr = {pr}')
 
     if hook:
-        if drift:
-            print(
-                f"sidebar: {len(drift)} item(s) need judgment "
-                f"(run /cmux-control:tidy-sidebar to clean up)"
-            )
+        if acted:
+            print(f"sidebar: {len(acted)} change(s)")
         return 0
-
-    if fixed and not quiet:
-        for line in fixed:
-            print(f"fixed   {line}")
-    for line in drift:
-        print(f"drift   {line}")
-
-    if drift:
-        if not quiet:
-            print(
-                f"\n{len(drift)} item(s) need judgment — run /cmux-control:tidy-sidebar",
-                file=sys.stderr,
-            )
-        return 1
+    for line in acted:
+        print(f"did     {line}")
+    for line in notes:
+        print(f"note    {line}")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as e:
+        if "--hook" in sys.argv:
+            sys.exit(0)
+        print(f"cmux-sidebar-sync: {e}", file=sys.stderr)
+        sys.exit(2)

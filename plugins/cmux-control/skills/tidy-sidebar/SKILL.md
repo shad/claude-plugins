@@ -1,62 +1,46 @@
 ---
-description: Clean up the cmux sidebar so it matches its semantic contract — apply the mechanical fixes, then hand what needs judgment to a cheap model that reads each session and retitles it. Use when the sidebar has drifted, when a Stop hook reports items needing judgment, or when the user asks to tidy, clean up, or re-organize their sidebar.
+description: Clean up the cmux sidebar — group rows by the feature their session is working on, refresh PR pills, and fix titles that name the opening ask instead of the work. Use when the sidebar has drifted, when the Stop hook reports changes, or when the user asks to tidy or re-organize their sidebar.
 ---
 
 # Tidy the sidebar
 
-Two passes with a clean split: **what is decidable from state, and what needs
-someone to look.**
+Two passes. One is free and runs on its own. The other costs a model and runs
+when asked.
+
+## The free pass
 
 ```sh
-cmux-sidebar-sync --check    # what is wrong, changing nothing
-cmux-sidebar-sync            # fix the mechanical half, report the rest
+cmux-sidebar-sync --check    # report only
+cmux-sidebar-sync            # group rows, set PR pills
 ```
 
-`bin/cmux-sidebar-sync` enforces the rules that follow from state alone — color
-follows group, ungrouped rows carry no hue, anchor titles match group names —
-and reports what it cannot decide: a title that reads like an opening prompt, a
-row holding two streams, a group with no members. It costs no tokens and is safe
-to run on every turn; the plugin's `Stop` hook already does, in `--hook` mode,
-where it applies fixes silently and prints one line if judgment is needed.
+It reads each row's transcript, finds the last worktree the session entered, and
+puts the row in that feature's group. It creates groups. It never moves a row
+out or undoes a placement. PR pills come from one cached `gh` call per repo.
 
-Everything it reports needs a look at what the sessions are actually doing. That
-is the second pass, and it is the only part that costs anything.
+The plugin's Stop hook already runs this after every turn. It costs nothing, so
+do not spend a model on anything it handles.
 
-## Run it
+## The paid pass
 
-1. **`cmux-sidebar-sync`** — apply the mechanical fixes and read the drift list.
-   Exit 0 means done; there is nothing further to do and you should say so
-   rather than reorganizing something that is already correct.
+cmux names every row itself, every turn, free. About a third of those names are
+the opening ask rather than the work — `Post findings on PR` for a session that
+posted them an hour ago.
 
-2. **Dispatch the groundskeeper** for the drift, using the `sidebar-groundskeeper`
-   agent — it runs on a cheap model because the work is "read four screens,
-   write four short titles", not reasoning. Hand it the drift list verbatim and
-   the workspace refs. It reads each session with `cmux read-screen`, renames to
-   `role · object`, fills in group color and icon, and reports what it left.
+Fix those with the `sidebar-groundskeeper` agent. It runs on a cheap model
+because the work is "read four screens, write four short titles." Hand it the
+rows to look at. It reads each session and renames to `role · object`.
 
-3. **Relay what changed** — the renames, and anything it declined to decide.
-   Group splits, closes, and reorders are not its job and come back as reports;
-   act on them yourself only if the user asks.
+Run it when the user asks. Not automatically. A rename the user did not watch
+happen is a sidebar that lies to them — they look away with `What's next` and
+look back at something else.
 
-## When to run the expensive pass
-
-On demand, and when the Stop hook says judgment is needed — not automatically.
-The cheap pass is idempotent and invisible, so running it constantly is free.
-The judgment pass **renames the user's rows**, and a rename that happens without
-them watching is indistinguishable from the sidebar lying to them: they look
-away with `What's next` and look back at something else. Let the hook surface
-that cleanup is available and let a person say go.
-
-The one exception worth offering: after a burst of workspace creation — a swarm
-of agents just spawned — the sidebar is auto-named and uninformative, and
-tidying immediately is what makes it readable at all.
+The exception: right after a swarm spawns, every row is auto-named and the
+sidebar is unreadable. Tidying then is what makes it useful at all.
 
 ## Rules
 
-1. The deterministic pass runs first, always. Never spend a model on something
-   `cmux-sidebar-sync` already fixes.
-2. Exit 0 means stop. Do not improve a compliant sidebar.
-3. The groundskeeper owns titles, group membership, group color and icon.
-   Closing, splitting, reordering, and pinning stay with you and the user.
-4. Report renames back to the user explicitly. They have to be able to find
-   their rows again.
+1. Free pass first. Never spend a model on what it already does.
+2. Nothing to fix means say so. Do not improve a sidebar that is fine.
+3. The groundskeeper owns titles. Grouping, closing, and splitting stay with you.
+4. Report every rename. The user has to find their work again.

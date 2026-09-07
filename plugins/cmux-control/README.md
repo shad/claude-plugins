@@ -1,18 +1,10 @@
 # cmux-control
 
-A skill for driving the cmux terminal from inside a Claude
-Code session running in it.
+Drive the cmux terminal from a Claude session running inside it.
 
-cmux exposes its entire UI over a CLI, so anything you could do with the mouse
-in the sidebar — rename, color, group, pin, split, close — Claude can do for
-you. This skill teaches it *what is worth doing*: naming conventions that make
-a sidebar of a dozen parallel agents readable, grouping a swarm of workspaces
-into a collapsible section, and reporting progress with status pills instead of
-stealing focus.
-
-It also encodes the guardrails: read state before mutating (refs go stale),
-never move the user's focus as a side effect, and treat `cmux send` into another
-surface as typing on someone else's keyboard.
+cmux exposes its whole UI over a CLI, so a session can reshape the terminal it
+lives in. This plugin decides what is worth doing with that, and what each part
+of the sidebar means.
 
 ## Install
 
@@ -21,39 +13,44 @@ surface as typing on someone else's keyboard.
 /plugin install cmux-control@shad
 ```
 
+## The contract
+
+Every channel means one thing:
+
+- **A group is one worktree.** One feature. Rows in the main checkout go to a
+  `repo · main` bucket.
+- **Grouping is additive.** Create and add, never move out or re-parent.
+- **Titles come from cmux**, free, every turn. Fix one only when asked.
+- **Pills carry PR state**, from one cached `gh` call per repo.
+- **Notify only when blocked or done.** It is the only lever on order.
+- **Never reorder. Never color. Nothing pinned.**
+
+Shell cwd cannot tell you a row's feature — every session reads in the main
+checkout and writes elsewhere. So a hook records what each session touches. That
+is ground truth, and it needs no convention: a session reaches a worktree by
+`EnterWorktree`, `git -C`, or absolute path, and all three touch files.
+
+`skills/cmux-control/references/sidebar-semantics.md` is the full contract.
+
 ## What's in it
 
 | Component | Does |
 |---|---|
 | `cmux-control` skill | the contract, and how to reshape a sidebar under it |
-| `references/sidebar-semantics.md` | the full per-channel contract |
-| `bin/cmux-sidebar-sync` | deterministic pass — fixes what state decides, reports the rest |
+| `bin/cmux-worktree-note` | records which worktree a session touches |
+| `bin/cmux-sidebar-sync` | groups rows by feature, sets PR pills |
+| hooks | `PostToolUse` records worktrees, `Stop` runs the sync |
 | `tidy-sidebar` skill | runs both passes in order |
-| `sidebar-groundskeeper` agent | the cheap-model pass: reads sessions, retitles rows |
-| `Stop` hook | runs the deterministic pass after every turn, silently |
-
-## The sidebar contract
-
-Every channel means one thing, and channels never borrow across axes:
-
-- **Identity** — title, group, color, icon, description. Changes when the work
-  changes. Color is the *stream*, never the status.
-- **State** — pills, progress, spinner, log, notify. Every one is a promise to
-  clear it.
-- **Attention** — pin, collapse, order, unread badge. Scarce by definition; the
-  default is nothing pinned.
-
-`references/sidebar-semantics.md` has the per-channel rules and the failure each
-one prevents.
+| `sidebar-groundskeeper` agent | cheap-model pass: reads sessions, fixes titles |
 
 ## Use
 
-The skill is model-invoked — just talk about the terminal:
+Talk about the terminal:
 
-- "rename this session to PR #75 review"
-- "group these four workspaces by repo"
-- "put a status pill up while the build runs"
+- "group these by feature"
+- "put a pill up while the build runs"
+- "tidy the sidebar"
 
 ## Requires
 
-cmux, and a session running inside it.
+cmux. `gh` for PR pills.

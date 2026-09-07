@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Record which worktree a session is touching.
+
+Runs on every Edit, Write, and Bash call. When a path or a command names a
+worktree, it writes that feature to a cache keyed by session id. The sidebar
+reads it instead of guessing.
+
+This is ground truth. A session reaches a worktree by EnterWorktree, by
+`git -C`, or by absolute path, and no convention makes those the same. All three
+touch files, and this sees the files.
+
+Reads a hook payload on stdin. Writes nothing to stdout. Never fails.
+"""
+import json
+import os
+import pathlib
+import re
+import sys
+
+CACHE = pathlib.Path.home() / ".cache" / "cmux-sidebar-sync" / "session"
+WORKTREE = re.compile(r"([^\s\"']*)(?:\.claude/)?\.?worktrees/([A-Za-z0-9._-]+)")
+
+
+def main():
+    payload = json.load(sys.stdin)
+    session = payload.get("session_id")
+    if not session:
+        return
+    ti = payload.get("tool_input") or {}
+    haystack = " ".join(
+        str(ti.get(k, "")) for k in ("file_path", "command", "notebook_path", "path")
+    )
+    m = WORKTREE.search(haystack)
+    if not m:
+        return
+    repo, feature = m.group(1).rstrip("/."), m.group(2)
+    repo = re.sub(r"/\.claude$", "", repo)  # Claude Code's own worktree root
+    if not repo or not repo.startswith("/"):
+        # `git -C .worktrees/foo` is relative. Resolve against the session's cwd
+        # — which may itself be a worktree, so climb back to the main checkout.
+        repo = (payload.get("cwd") or "").rstrip("/")
+    repo = re.sub(r"/(?:\.claude/)?\.?worktrees/[^/]+(?:/.*)?$", "", repo)
+    if not repo:
+        return
+
+    # The worktree must exist. Prose is full of placeholders — `.worktrees/<name>`,
+    # `ticket-N` — and a hook that believes documentation records fiction.
+    for root in (".worktrees", ".claude/worktrees"):
+        if os.path.isdir(os.path.join(repo, root, feature)):
+            break
+    else:
+        return
+    CACHE.mkdir(parents=True, exist_ok=True)
+    (CACHE / session).write_text(f"{repo}\t{feature}\n")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        pass  # a hook that breaks an edit is worse than a sidebar that is wrong
